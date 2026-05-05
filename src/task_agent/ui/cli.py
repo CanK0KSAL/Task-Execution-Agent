@@ -14,9 +14,10 @@ from task_agent.agent.executor import AgentExecutor
 from task_agent.agent.state import ConversationState
 from task_agent.config import Config
 from task_agent.domain.models import AgentFinalResponse, IntentType
+from task_agent.evaluation.runner import run_all_scenarios
+from task_agent.evaluation.scenarios import ALL_SCENARIOS
 
 app = typer.Typer(
-    invoke_without_command=True,
     no_args_is_help=False,
     add_completion=False,
 )
@@ -346,10 +347,66 @@ def run_cli() -> None:
     app()
 
 
-@app.callback()
-def main_callback() -> None:
-    """Default command: start interactive chat."""
-    run_interactive_session()
+def run_demo_report(console_: Console | None = None) -> None:
+    """Print Rich report for all evaluation scenarios (non-interactive)."""
+    c = console_ or console
+    results = run_all_scenarios()
+    passed_n = sum(1 for r in results if r.passed_basic_checks)
+
+    c.print(
+        Panel.fit(
+            "[bold]Task Execution Agent — demo scenarios[/bold]\n"
+            "[dim]Mock planner only; no API key required.[/dim]",
+            title="Evaluation",
+            border_style="cyan",
+        ),
+    )
+
+    for sc, res in zip(ALL_SCENARIOS, results, strict=True):
+        status = "[green]PASS[/green]" if res.passed_basic_checks else "[red]FAIL[/red]"
+        c.print(
+            f"\n[bold]{sc.title}[/bold] [dim]({sc.id})[/dim] — {status}",
+        )
+        c.print(f"  [dim]Focus:[/dim] {', '.join(sc.requirement_focus)}")
+        for i, tr in enumerate(res.turn_results, start=1):
+            c.print(f"  [bold]Turn {i}[/bold] — {tr.user!r}")
+            c.print(f"    response_type={tr.response_type} intent={tr.intent}")
+            summ = (tr.summary or "").strip() or "(no summary)"
+            c.print(f"    summary: {summ}")
+            c.print(
+                f"    tools: {', '.join(tr.tool_names_called) or '—'} | "
+                f"options={tr.found_option_count} booked={tr.booked} "
+                f"reminder={tr.reminder_created}",
+            )
+            if tr.blockers:
+                c.print(f"    blockers: {'; '.join(tr.blockers)}")
+        for w in res.warnings:
+            c.print(f"  [yellow]Warning:[/yellow] {w}")
+
+    c.print()
+    c.print(
+        Panel.fit(
+            f"[bold]{passed_n}/{len(results)} scenarios passed basic checks.[/bold]",
+            border_style="green" if passed_n == len(results) else "yellow",
+        ),
+    )
+    if passed_n < len(results):
+        c.print(
+            "[dim]See warnings above for failed assertions.[/dim]",
+        )
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(ctx: typer.Context) -> None:
+    """Default: interactive chat when no subcommand is given."""
+    if ctx.invoked_subcommand is None:
+        run_interactive_session()
+
+
+@app.command("demo")
+def demo_command() -> None:
+    """Run all official demo scenarios and print a structured report."""
+    run_demo_report()
 
 
 if __name__ == "__main__":
