@@ -49,6 +49,9 @@ def test_no_search_results(executor: AgentExecutor) -> None:
     )
     assert resp.booked_item is None
     assert resp.blockers
+    blob = " ".join([resp.message, resp.summary or "", *resp.blockers]).lower()
+    assert "no booking" in blob
+    assert "no matching" in blob or "could not find" in blob
 
 
 def test_booking_unavailable_option(executor: AgentExecutor) -> None:
@@ -75,6 +78,9 @@ def test_booking_temporary_failure(executor: AgentExecutor) -> None:
     assert resp.response_type == AgentResponseType.FAILURE
     assert resp.booked_item is None
     assert not any(r.tool_name == ToolName.REMINDER_CREATE for r in resp.tool_results)
+    assert state.has_pending_confirmation()
+    joined = " ".join([resp.message, resp.summary or "", *resp.blockers]).lower()
+    assert "temporary" in joined
 
 
 def test_reminder_failure_after_booking_partial_success(
@@ -103,3 +109,23 @@ def test_reminder_failure_after_booking_partial_success(
     assert resp.booked_item
     assert resp.reminder is None
     assert resp.blockers
+    joined = " ".join(resp.blockers).lower()
+    assert "reminder creation failed" in joined
+
+
+@pytest.mark.parametrize(
+    "user_text",
+    [
+        "Find me 3 coworking spaces in Warsaw under $20/day.",
+        "Book me a dentist appointment in Warsaw next week after 5pm.",
+        "Remind me to call John tomorrow morning.",
+        "Plan a 2-day trip to Prague under 300 EUR.",
+    ],
+)
+def test_common_flows_non_empty_message_and_summary(
+    executor: AgentExecutor,
+    user_text: str,
+) -> None:
+    resp = executor.execute(user_text)
+    assert resp.message.strip()
+    assert (resp.summary or "").strip()

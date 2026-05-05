@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
-
 from task_agent.domain.models import Money
 
 
@@ -78,7 +76,7 @@ def extract_coworking_budget(text: str) -> Money | None:
     m = re.search(r"under\s*\$?\s*(\d+(?:\.\d+)?)\s*/\s*day", t)
     if m:
         return Money(amount=float(m.group(1)), currency="USD", period="day")
-    m = re.search(r"under\s+(\d+(?:\.\d+)?)\s*usd", t)
+    m = re.search(r"under\s+(\d+(?:\.\d+)?)\s*usd(?:\s*/\s*day)?", t)
     if m:
         return Money(amount=float(m.group(1)), currency="USD", period="day")
     return None
@@ -139,6 +137,183 @@ def extract_reminder_payload(text: str) -> tuple[str, str] | None:
     if when is None or not title:
         return None
     return title, when
+
+
+def is_cancel_message(text: str) -> bool:
+    """User wants to drop the current pending confirmation."""
+    t = normalize_text(text.strip())
+    phrases = (
+        "cancel",
+        "never mind",
+        "nevermind",
+        "abort",
+        "forget it",
+        "başka bir şey",
+        "iptal",
+    )
+    if t in phrases:
+        return True
+    if t == "stop" or t.startswith("stop "):
+        return True
+    return any(t.startswith(p + " ") for p in phrases if p != "stop")
+
+
+def is_constraint_update(text: str) -> bool:
+    """Short follow-up that adjusts budget, time, or city (not a full new task)."""
+    raw = text.strip()
+    t = normalize_text(raw)
+    prefixes = (
+        "actually ",
+        "instead ",
+        "make it ",
+        "change it to ",
+        "switch to ",
+    )
+    if any(t.startswith(p) for p in prefixes):
+        return True
+    task_markers = (
+        "find me",
+        "book me",
+        "plan a",
+        "remind me",
+        "schedule a",
+        "schedule meeting",
+    )
+    if any(m in t for m in task_markers):
+        return False
+    if extract_coworking_budget(raw) or re.search(
+        r"under\s*\$?\s*\d+(?:\.\d+)?\s*/\s*day",
+        t,
+    ):
+        return True
+    if extract_trip_budget(raw) or re.search(
+        r"under\s*(?:€\s*)?\d+(?:\.\d+)?\s*eur",
+        t,
+    ):
+        return len(t) < 80
+    if extract_date_range_phrase(raw):
+        return len(t) < 80
+    if re.match(r"^in\s+[a-z]+$", t):
+        return True
+    return False
+
+
+def merge_constraint_update(previous_request: str, update_text: str) -> str | None:
+    """Merge a constraint tweak into the prior utterance; None if unsure."""
+    prev = previous_request.strip()
+    if not prev:
+        return None
+    body = update_text.strip()
+    low = normalize_text(body)
+    for prefix in (
+        "actually ",
+        "instead ",
+        "make it ",
+        "change it to ",
+        "switch to ",
+    ):
+        if low.startswith(prefix):
+            body = body[len(prefix) :].strip()
+            low = normalize_text(body)
+            break
+
+    prev_low = normalize_text(prev)
+
+    # Coworking budget
+    if "coworking" in prev_low or (
+        "space" in prev_low and "warsaw" in prev_low
+    ):
+        bud = extract_coworking_budget(body) or extract_coworking_budget(update_text)
+        if bud and bud.currency == "USD":
+            new_phrase = f"under ${int(bud.amount)}/day" if bud.amount == int(bud.amount) else f"under ${bud.amount}/day"
+            m = re.search(
+                r"under\s*\$?\s*\d+(?:\.\d+)?\s*/\s*day",
+                prev,
+                flags=re.IGNORECASE,
+            )
+            if m:
+                return re.sub(
+                    r"under\s*\$?\s*\d+(?:\.\d+)?\s*/\s*day",
+                    new_phrase,
+                    prev,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+        return None
+
+    # Trip budget (EUR)
+    if "trip" in prev_low:
+        tb = extract_trip_budget(body) or extract_trip_budget(update_text)
+        if tb:
+            return re.sub(
+                r"under\s*(?:€\s*)?\d+(?:\.\d+)?(?:\s*eur)?",
+                f"under {int(tb.amount)} EUR",
+                prev,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+    # Dentist / appointment time
+    if "dentist" in prev_low or "appointment" in prev_low:
+        new_date = extract_date_range_phrase(body) or extract_date_range_phrase(
+            update_text,
+        )
+        if not new_date:
+            return None
+        replaced = False
+        merged = prev
+        for needle, _canonical in (
+            ("next week after 5pm", "next week after 5pm"),
+            ("next week after 5 pm", "next week after 5pm"),
+            ("next tuesday afternoon", "next Tuesday afternoon"),
+            ("tomorrow morning", "tomorrow morning"),
+        ):
+            if needle in normalize_text(merged):
+                merged = re.sub(
+                    re.escape(needle),
+                    new_date,
+                    merged,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                replaced = True
+                break
+        if replaced:
+            return merged
+        return f"{prev.rstrip('.')} {new_date}."
+
+    # City swap
+    city = extract_city(body) or extract_city(update_text)
+    if city and re.search(r"\bin\s+[A-Za-zÀ-ÿ]+\b", prev):
+        return re.sub(
+            r"in\s+[A-Za-zÀ-ÿ]+",
+            f"in {city}",
+            prev,
+            count=1,
+        )
+
+    return None
+
+
+def is_new_standalone_task(text: str) -> bool:
+    """Full new request (replaces pending confirmation)."""
+    key = detect_intent(text)
+    t = normalize_text(text)
+    if key == "reminder" and "remind me" in t:
+        return True
+    if key == "trip" and ("plan" in t or "trip to" in t):
+        return True
+    if key == "coworking" and ("find" in t or "coworking" in t):
+        return True
+    if key == "meeting" and (
+        "schedule" in t or "meeting with" in t
+    ):
+        return True
+    if key == "appointment" and (
+        "book" in t or "appointment" in t
+    ):
+        return True
+    return False
 
 
 def detect_intent(text: str) -> str:

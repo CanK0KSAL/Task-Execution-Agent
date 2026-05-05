@@ -6,7 +6,13 @@ import re
 from typing import Any
 
 from task_agent.agent.planner import Planner, get_planner
-from task_agent.agent.planner_support import extract_city
+from task_agent.agent.planner_support import (
+    extract_city,
+    is_cancel_message,
+    is_constraint_update,
+    is_new_standalone_task,
+    merge_constraint_update,
+)
 from task_agent.agent.state import ConversationState
 from task_agent.config import Config
 from task_agent.domain.models import (
@@ -23,6 +29,14 @@ from task_agent.domain.models import (
 )
 from task_agent.domain.schemas import UserRequest
 from task_agent.tools.registry import ToolRegistry
+
+_NO_RESULTS_HINT = (
+    "Try relaxing the budget, changing the time window, or changing the city."
+)
+_UNKNOWN_EXAMPLES = (
+    'Examples: "Find me 3 coworking spaces in Warsaw under $20/day." or '
+    '"Book me a dentist appointment in Warsaw next week after 5pm."'
+)
 
 
 def parse_selection_index(message: str) -> int | None:
@@ -76,65 +90,138 @@ class AgentExecutor:
         state.add_user_message(user_message)
 
         if state.has_pending_confirmation():
+            if is_cancel_message(user_message):
+                state.clear_pending_confirmation()
+                return AgentFinalResponse(
+                    response_type=AgentResponseType.SUCCESS,
+                    message="Canceled the pending action. No booking was made.",
+                    summary=(
+                        "Pending confirmation cleared. "
+                        "No booking or reminder was created."
+                    ),
+                    intent=state.last_task.intent
+                    if state.last_task
+                    else IntentType.UNKNOWN,
+                    raw_task=state.last_task,
+                )
+
+            base_request = state.pending_original_request or (
+                state.last_task.original_request if state.last_task else ""
+            )
+            if is_constraint_update(user_message):
+                merged = merge_constraint_update(base_request, user_message)
+                if merged:
+                    state.clear_pending_confirmation()
+                    return self._plan_and_execute(merged, state)
+
             selection = parse_selection_index(user_message)
             if selection is not None:
                 return self._handle_pending_selection(selection, state)
+
+            if is_new_standalone_task(user_message):
+                state.clear_pending_confirmation()
+                pivot = "Canceled the previous pending action because a new task was started."
+                state.assumptions = list(dict.fromkeys([*state.assumptions, pivot]))
+                return self._plan_and_execute(user_message, state)
+
             return AgentFinalResponse(
                 response_type=AgentResponseType.CLARIFICATION,
                 message=(
                     "I already have options ready. "
-                    "Tell me which to use (for example, “book the first one”)."
+                    "Tell me which to use (for example, 'book the first one'), "
+                    "adjust constraints (e.g. 'actually tomorrow morning'), "
+                    "say 'cancel', or start a new task."
+                ),
+                summary=(
+                    "Waiting for your choice, a constraint update, cancellation, "
+                    "or a new task. No booking was made."
                 ),
                 blockers=["Awaiting confirmation for pending options."],
+                raw_task=state.last_task,
             )
+
+        if state.last_task and state.last_task.intent in (
+            IntentType.FIND_OPTIONS,
+            IntentType.PLAN_TRIP,
+        ):
+            if is_constraint_update(user_message):
+                merged = merge_constraint_update(
+                    state.last_task.original_request,
+                    user_message,
+                )
+                if merged:
+                    return self._plan_and_execute(merged, state)
 
         selection = parse_selection_index(user_message)
         if selection is not None:
             return AgentFinalResponse(
                 response_type=AgentResponseType.BLOCKED,
                 message="There is nothing on hold to select. Please start a request first.",
+                summary="No pending selection context. No booking was made.",
                 intent=IntentType.UNKNOWN,
                 blockers=["No pending options to book or schedule."],
+                raw_task=state.last_task,
             )
 
         merged = self._try_merge_city_clarification(user_message, state)
         text_for_planner = merged if merged else user_message
+        return self._plan_and_execute(text_for_planner, state)
 
-        task = self._planner.plan(UserRequest(text=text_for_planner))
+    def _plan_and_execute(self, text: str, state: ConversationState) -> AgentFinalResponse:
+        task = self._planner.plan(UserRequest(text=text))
         state.last_task = task
         state.pending_missing_fields = [m.name for m in task.missing_fields]
         state.assumptions = list(
             dict.fromkeys([*state.assumptions, *task.assumptions]),
         )
 
-        if task.missing_fields:
-            return self._clarification_response(task)
-
         if task.intent == IntentType.UNKNOWN:
-            return AgentFinalResponse(
-                response_type=AgentResponseType.BLOCKED,
-                message=task.missing_fields[0].question
-                if task.missing_fields
-                else "I need more detail to proceed.",
-                intent=IntentType.UNKNOWN,
-                missing_fields=list(task.missing_fields),
-                assumptions=list(task.assumptions),
-                raw_task=task,
-                blockers=["Unsupported or unclear request."],
-            )
+            return self._unknown_response(task, state)
+
+        if task.missing_fields:
+            return self._clarification_response(task, state)
 
         return self._run_planned_tools(task, state)
 
-    def _clarification_response(self, task: ExtractedTask) -> AgentFinalResponse:
+    def _clarification_response(
+        self,
+        task: ExtractedTask,
+        state: ConversationState,
+    ) -> AgentFinalResponse:
         first = task.missing_fields[0]
         return AgentFinalResponse(
             response_type=AgentResponseType.CLARIFICATION,
             message=first.question,
             intent=task.intent,
-            summary="More information is required before running tools.",
+            summary=(
+                "More information is required before running tools. "
+                "No booking was made."
+            ),
             missing_fields=list(task.missing_fields),
-            assumptions=list(task.assumptions),
+            assumptions=list(state.assumptions),
             raw_task=task,
+        )
+
+    def _unknown_response(
+        self,
+        task: ExtractedTask,
+        state: ConversationState,
+    ) -> AgentFinalResponse:
+        lines = [
+            "I need a clearer task before I can use tools.",
+            _UNKNOWN_EXAMPLES,
+        ]
+        if task.missing_fields:
+            lines.insert(1, task.missing_fields[0].question)
+        return AgentFinalResponse(
+            response_type=AgentResponseType.BLOCKED,
+            message="\n".join(lines),
+            summary="I could not map that request to a supported intent. No tools were run.",
+            intent=IntentType.UNKNOWN,
+            missing_fields=list(task.missing_fields),
+            assumptions=list(state.assumptions),
+            raw_task=task,
+            blockers=["Unsupported or vague request."],
         )
 
     def _try_merge_city_clarification(
@@ -191,32 +278,48 @@ class AgentExecutor:
                 ToolStatus.TEMPORARY_FAILURE,
                 ToolStatus.NO_RESULTS,
             ):
-                return self._tool_failure_response(task, steps, results, result)
+                return self._tool_failure_response(task, state, steps, results, result)
 
         return self._success_branch(task, state, steps, results)
 
     def _tool_failure_response(
         self,
         task: ExtractedTask,
+        state: ConversationState,
         steps: list[AgentStep],
         results: list[ToolCallResult],
         failed: ToolCallResult,
     ) -> AgentFinalResponse:
-        blocker = failed.error_message or "Tool execution failed."
-        rtype = AgentResponseType.BLOCKED
-        if failed.status == ToolStatus.TEMPORARY_FAILURE:
-            rtype = AgentResponseType.FAILURE
-        elif failed.status == ToolStatus.NO_RESULTS:
+        base_err = failed.error_message or "Tool execution failed."
+        blockers: list[str] = []
+        if failed.status == ToolStatus.NO_RESULTS:
             rtype = AgentResponseType.PARTIAL_SUCCESS
+            message = "I could not find matching options for those constraints."
+            summary = message + " No booking was made."
+            blockers = [
+                "No matching results were found.",
+                "No booking was made.",
+                _NO_RESULTS_HINT,
+            ]
+        elif failed.status == ToolStatus.TEMPORARY_FAILURE:
+            rtype = AgentResponseType.FAILURE
+            message = "A tool failed temporarily. Please try again."
+            summary = "Temporary tool failure. Please try again."
+            blockers = ["Temporary tool failure. Please try again.", base_err]
+        else:
+            rtype = AgentResponseType.BLOCKED
+            message = "I could not complete the plan with the current tools."
+            summary = "Tool execution stopped. No booking was made."
+            blockers = [base_err, "No booking was made."]
         return AgentFinalResponse(
             response_type=rtype,
-            message="I could not complete the search with the current plan.",
-            summary="Tool execution stopped after a failure or empty result set.",
+            message=message,
+            summary=summary,
             intent=task.intent,
             steps=steps,
             tool_results=results,
-            blockers=[blocker],
-            assumptions=list(task.assumptions),
+            blockers=blockers,
+            assumptions=list(state.assumptions),
             raw_task=task,
         )
 
@@ -237,9 +340,17 @@ class AgentExecutor:
                     response_type=AgentResponseType.BLOCKED,
                     message="No dentist options were found to book.",
                     intent=task.intent,
+                    summary=(
+                        "No matching dentist options for those constraints. "
+                        "No booking was made."
+                    ),
                     steps=steps,
                     tool_results=results,
-                    blockers=["Search returned no bookable options."],
+                    blockers=[
+                        "No matching results were found.",
+                        "No booking was made.",
+                        _NO_RESULTS_HINT,
+                    ],
                     raw_task=task,
                 )
             state.set_pending_options(options, "book_option", task.original_request)
@@ -247,15 +358,18 @@ class AgentExecutor:
                 response_type=AgentResponseType.PARTIAL_SUCCESS,
                 message=(
                     "I found dentist options matching your request. "
-                    "Reply with which option to book (for example, “book the first one”)."
+                    "Reply with which option to book (for example, 'book the first one')."
                 ),
-                summary="Search completed; booking requires your confirmation.",
+                summary=(
+                    "Search completed; booking requires your confirmation. "
+                    "No booking was made yet."
+                ),
                 intent=task.intent,
                 steps=steps,
                 tool_results=results,
                 found_options=options,
                 blockers=["User confirmation required before booking."],
-                assumptions=list(task.assumptions),
+                assumptions=list(state.assumptions),
                 raw_task=task,
             )
 
@@ -269,7 +383,7 @@ class AgentExecutor:
                 steps=steps,
                 tool_results=results,
                 found_options=options,
-                assumptions=list(task.assumptions),
+                assumptions=list(state.assumptions),
                 raw_task=task,
             )
 
@@ -292,7 +406,7 @@ class AgentExecutor:
                 steps=steps,
                 tool_results=results,
                 found_options=options,
-                assumptions=list(task.assumptions),
+                assumptions=list(state.assumptions),
                 raw_task=task,
             )
 
@@ -309,21 +423,25 @@ class AgentExecutor:
                 response_type=AgentResponseType.PARTIAL_SUCCESS,
                 message=(
                     "Available slots and attendee hints are ready. "
-                    "Confirm a slot (for example, “book the first one”) to set a reminder."
+                    "Confirm a slot (for example, 'book the first one') to set a reminder."
                 ),
-                summary="Calendar data retrieved; meeting is not finalized yet.",
+                summary=(
+                    "Calendar data retrieved; meeting is not finalized yet. "
+                    "No booking was made."
+                ),
                 intent=task.intent,
                 steps=steps,
                 tool_results=results,
                 found_options=options,
                 blockers=["User confirmation required before scheduling."],
-                assumptions=list(task.assumptions),
+                assumptions=list(state.assumptions),
                 raw_task=task,
             )
 
         return AgentFinalResponse(
             response_type=AgentResponseType.SUCCESS,
             message="Request processed.",
+            summary="Request processed.",
             intent=task.intent,
             steps=steps,
             tool_results=results,
@@ -368,8 +486,10 @@ class AgentExecutor:
             return AgentFinalResponse(
                 response_type=AgentResponseType.BLOCKED,
                 message="That selection is not available.",
+                summary="Selection was out of range. No booking was made.",
                 intent=IntentType.UNKNOWN,
                 blockers=["Selection out of range for pending options."],
+                raw_task=state.last_task,
             )
 
         selected = options[index]
@@ -380,7 +500,9 @@ class AgentExecutor:
         return AgentFinalResponse(
             response_type=AgentResponseType.BLOCKED,
             message="Unsupported pending action.",
+            summary="Internal state error. No booking was made.",
             blockers=["Unknown pending action state."],
+            raw_task=state.last_task,
         )
 
     def _complete_booking(
@@ -407,15 +529,29 @@ class AgentExecutor:
 
         if book_res.status != ToolStatus.SUCCESS:
             blocker = book_res.error_message or "Booking failed."
+            if book_res.status == ToolStatus.TEMPORARY_FAILURE:
+                return AgentFinalResponse(
+                    response_type=AgentResponseType.FAILURE,
+                    message="Booking could not be completed due to a temporary error.",
+                    summary=(
+                        "Temporary tool failure. No booking was completed. "
+                        "Pending options are still available."
+                    ),
+                    intent=IntentType.BOOK_APPOINTMENT,
+                    steps=[step_book],
+                    tool_results=[book_res],
+                    blockers=["Temporary tool failure. Please try again.", blocker],
+                    raw_task=state.last_task,
+                )
             return AgentFinalResponse(
-                response_type=AgentResponseType.FAILURE
-                if book_res.status == ToolStatus.TEMPORARY_FAILURE
-                else AgentResponseType.BLOCKED,
+                response_type=AgentResponseType.BLOCKED,
                 message="Booking could not be completed.",
+                summary="No booking was made. You can pick another option or adjust your request.",
                 intent=IntentType.BOOK_APPOINTMENT,
                 steps=[step_book],
                 tool_results=[book_res],
-                blockers=[blocker],
+                blockers=[blocker, "No booking was made."],
+                raw_task=state.last_task,
             )
 
         title = str(option.get("title") or option_id)
@@ -455,8 +591,13 @@ class AgentExecutor:
                 tool_results=[book_res, rem_res],
                 booked_item=dict(book_res.data),
                 reminder=dict(rem_res.data),
+                raw_task=state.last_task,
             )
 
+        rem_err = rem_res.error_message or ""
+        reminder_blockers = ["Reminder creation failed."]
+        if rem_err:
+            reminder_blockers.append(rem_err)
         return AgentFinalResponse(
             response_type=AgentResponseType.PARTIAL_SUCCESS,
             message="Booking succeeded but reminder failed.",
@@ -466,7 +607,8 @@ class AgentExecutor:
             tool_results=[book_res, rem_res],
             booked_item=dict(book_res.data),
             reminder=None,
-            blockers=[rem_res.error_message or "Reminder creation failed."],
+            blockers=reminder_blockers,
+            raw_task=state.last_task,
         )
 
     def _complete_meeting_reminder(
@@ -501,9 +643,11 @@ class AgentExecutor:
             return AgentFinalResponse(
                 response_type=AgentResponseType.FAILURE,
                 message="Could not set meeting reminder.",
+                summary="Meeting reminder could not be created.",
                 steps=[step],
                 tool_results=[rem_res],
                 blockers=[rem_res.error_message or "Reminder failed."],
+                raw_task=state.last_task,
             )
         return AgentFinalResponse(
             response_type=AgentResponseType.PARTIAL_SUCCESS,
@@ -513,6 +657,7 @@ class AgentExecutor:
             steps=[step],
             tool_results=[rem_res],
             reminder=dict(rem_res.data),
+            raw_task=state.last_task,
         )
 
     @staticmethod

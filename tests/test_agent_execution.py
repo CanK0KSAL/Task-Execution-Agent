@@ -104,8 +104,8 @@ def test_reminder_flow(executor: AgentExecutor) -> None:
 
 def test_unknown_request(executor: AgentExecutor) -> None:
     resp = executor.execute("Can you handle this for me?")
-    assert resp.response_type in (
-        AgentResponseType.BLOCKED,
-        AgentResponseType.CLARIFICATION,
-    )
+    assert resp.response_type == AgentResponseType.BLOCKED
     assert resp.tool_results == []
+    assert "clearer task" in resp.message.lower()
+    assert "coworking" in resp.message.lower()
+    assert "dentist" in resp.message.lower()

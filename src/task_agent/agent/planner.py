@@ -233,9 +233,7 @@ class MockPlanner:
                 requires_user_confirmation=True,
             )
 
-        search_query = (
-            f"dentist {city} next week after 5pm evening appointments available"
-        )
+        search_query = f"dentist {city} {dr} appointments available"
         return ExtractedTask(
             intent=IntentType.BOOK_APPOINTMENT,
             confidence=0.92,
