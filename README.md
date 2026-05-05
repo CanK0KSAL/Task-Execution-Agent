@@ -11,7 +11,7 @@ The project uses **deterministic mock services by default**, so it can be evalua
 - **Intent detection** and **slot extraction** (mock rules + optional LLM planner)
 - **Missing-information** handling with clarifying questions (`MissingField`)
 - **Tool planning** (`ToolCallPlan`) and **orchestration** (`AgentExecutor`, `ToolRegistry`)
-- **Confirmation-before-booking** for dentist appointments and meeting slots
+- **Confirmation flow** before booking appointments or finalizing meeting reminders
 - **Stateful follow-ups** (selection, cancel, pivot to a new task, budget/time constraint updates)
 - **No-results** and **temporary failure** handling with explicit blockers (no false success claims)
 - **Interactive CLI** (Rich + Typer)
@@ -129,7 +129,7 @@ Each returns a **`ToolCallResult`** with `status`, optional `failure_reason`, an
 
 ## Safety and reliability
 
-- **`booking_service` is not invoked** until the user **confirms** a concrete option (dentist / meeting flows).
+- **`booking_service` is not invoked** until the user **confirms** a concrete appointment option; meeting flows require confirmation before creating a reminder.
 - **OpenAI** output is validated as **`ExtractedTask`**; on any failure the code **falls back to `MockPlanner`**.
 - The **demo / evaluation harness** forces **mock** configuration (no key required).
 - **Mock tools** read local **`data/*.json`** only — **no network** calls in the default path.
