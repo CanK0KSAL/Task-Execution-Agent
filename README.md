@@ -60,7 +60,7 @@ Details: `docs/requirement-mapping.md`, `docs/architecture.md`, `src/task_agent/
 ## Run tests
 
 ```bash
-uv sync --extra dev
+uv sync
 uv run pytest tests/ -q
 ```
 
