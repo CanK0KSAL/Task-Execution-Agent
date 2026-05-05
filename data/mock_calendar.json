@@ -1,0 +1,120 @@
+{
+  "timezone_default": "Europe/Warsaw",
+  "groups": {
+    "next_week_after_5pm": {
+      "timezone": "Europe/Warsaw",
+      "slots": [
+        {
+          "id": "cal-nw-1",
+          "date": "2026-05-12",
+          "start_time": "17:30",
+          "end_time": "18:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Focus block",
+          "available": true,
+          "notes": "After 5pm next week (Mon)"
+        },
+        {
+          "id": "cal-nw-2",
+          "date": "2026-05-13",
+          "start_time": "18:00",
+          "end_time": "19:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Deep work",
+          "available": true,
+          "notes": "Evening slot next week"
+        },
+        {
+          "id": "cal-nw-3",
+          "date": "2026-05-14",
+          "start_time": "17:00",
+          "end_time": "17:30",
+          "timezone": "Europe/Warsaw",
+          "label": "Stand-up overrun",
+          "available": false,
+          "notes": "Busy — team sync"
+        },
+        {
+          "id": "cal-nw-4",
+          "date": "2026-05-14",
+          "start_time": "19:30",
+          "end_time": "20:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Personal",
+          "available": true,
+          "notes": "Late evening next week"
+        }
+      ]
+    },
+    "next_tuesday_afternoon": {
+      "timezone": "Europe/Warsaw",
+      "slots": [
+        {
+          "id": "cal-tue-1",
+          "date": "2026-05-06",
+          "start_time": "14:00",
+          "end_time": "15:30",
+          "timezone": "Europe/Warsaw",
+          "label": "Client workshop",
+          "available": false,
+          "notes": "Booked afternoon session"
+        },
+        {
+          "id": "cal-tue-2",
+          "date": "2026-05-06",
+          "start_time": "15:30",
+          "end_time": "16:30",
+          "timezone": "Europe/Warsaw",
+          "label": "Open slot",
+          "available": true,
+          "notes": "Tuesday afternoon gap"
+        },
+        {
+          "id": "cal-tue-3",
+          "date": "2026-05-06",
+          "start_time": "16:30",
+          "end_time": "17:30",
+          "timezone": "Europe/Warsaw",
+          "label": "1:1s",
+          "available": true,
+          "notes": "Tuesday late afternoon"
+        }
+      ]
+    },
+    "tomorrow_morning": {
+      "timezone": "Europe/Warsaw",
+      "slots": [
+        {
+          "id": "cal-tmr-1",
+          "date": "2026-05-06",
+          "start_time": "08:30",
+          "end_time": "09:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Gym",
+          "available": false,
+          "notes": "Morning workout"
+        },
+        {
+          "id": "cal-tmr-2",
+          "date": "2026-05-06",
+          "start_time": "09:30",
+          "end_time": "11:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Deep work",
+          "available": true,
+          "notes": "Tomorrow morning focus"
+        },
+        {
+          "id": "cal-tmr-3",
+          "date": "2026-05-06",
+          "start_time": "11:15",
+          "end_time": "12:00",
+          "timezone": "Europe/Warsaw",
+          "label": "Inbox zero",
+          "available": true,
+          "notes": "Late morning buffer"
+        }
+      ]
+    }
+  }
+}

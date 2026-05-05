@@ -1,0 +1,6 @@
+{
+  "existing_booking_ids": ["bk-existing-001", "bk-existing-002"],
+  "unavailable_option_ids": ["dent-unavailable-001", "cw-unavailable-001"],
+  "temporary_failure_option_ids": ["book-temp-fail-001"],
+  "notes": "Deterministic booking rules for mock booking_service."
+}
