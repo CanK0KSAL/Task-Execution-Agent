@@ -1,6 +1,6 @@
 # Demo transcript (sample)
 
-Abbreviated samples from the interactive CLI or the same flows as `uv run python main.py demo`. Tool names match the mock registry.
+Abbreviated samples from the interactive CLI or the same flows as `uv run python main.py demo`. Tool names match the mock registry. For evaluator automation, prefer **`main.py demo`** (deterministic, 8 scenarios).
 
 ## Dentist: clarification, then book
 

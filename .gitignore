@@ -35,7 +35,7 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Testing / types
+# Testing / types / linters
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

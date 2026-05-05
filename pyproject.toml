@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "task-execution-agent"
 version = "0.1.0"
-description = "Task Execution AI Agent — planner, tools, and CLI (take-home scaffold)."
+description = "Task execution agent: planner, mock tools, executor, CLI, and evaluation demo."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
