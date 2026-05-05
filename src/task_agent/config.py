@@ -35,4 +35,5 @@ class Config:
 
     @property
     def use_openai(self) -> bool:
-        return self.agent_llm_mode != "mock" and bool(self.openai_api_key)
+        """True when OpenAI-backed features are configured (explicit openai mode + key)."""
+        return self.agent_llm_mode == "openai" and bool(self.openai_api_key)

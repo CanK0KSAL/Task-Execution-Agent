@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from task_agent.config import Config, load_config_env
+from task_agent.config import Config
 from task_agent.tools.registry import REGISTRY, get_tool
 
 
@@ -19,7 +19,7 @@ def test_config_from_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     mp.delenv("AGENT_LLM_MODE", raising=False)
     mp.delenv("OPENAI_API_KEY", raising=False)
     mp.delenv("OPENAI_MODEL", raising=False)
-    load_config_env(dotenv_path="/nonexistent/.env")
+    mp.setattr("task_agent.config.load_config_env", lambda *_a, **_k: None)
     cfg = Config.from_env()
     assert cfg.agent_llm_mode == "mock"
     assert cfg.openai_api_key is None
