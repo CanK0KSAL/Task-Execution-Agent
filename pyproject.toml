@@ -38,3 +38,8 @@ src = ["src", "tests", "main.py"]
 python_version = "3.12"
 strict = false
 packages = ["task_agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
